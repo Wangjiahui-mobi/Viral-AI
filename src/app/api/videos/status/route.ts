@@ -1,74 +1,51 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { videoJobs, screenplays } from "@/lib/db/schema";
-import { getVideoStatus } from "@/lib/services/sora";
-import { eq } from "drizzle-orm";
+import { getSeedanceStatus } from "@/lib/services/seedance";
+import { jobStore } from "../generate/route";
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const screenplayId = searchParams.get("screenplayId");
+    const scriptId = searchParams.get("scriptId");
 
-    if (!screenplayId) {
+    if (!scriptId) {
       return NextResponse.json(
-        { error: "Missing screenplayId parameter" },
+        { error: "Missing scriptId parameter" },
         { status: 400 }
       );
     }
 
-    // Fetch all video jobs for this screenplay
-    const jobs = db
-      .select()
-      .from(videoJobs)
-      .where(eq(videoJobs.screenplayId, screenplayId))
-      .all();
+    const jobs = jobStore.get(scriptId);
 
-    if (jobs.length === 0) {
+    if (!jobs || jobs.length === 0) {
       return NextResponse.json(
-        { error: "No video jobs found for this screenplay" },
+        { error: "No video jobs found" },
         { status: 404 }
       );
     }
 
-    // Check status of incomplete jobs with Sora API
+    // Check status of incomplete jobs
     for (const job of jobs) {
       if (
-        job.soraJobId &&
+        job.seedanceJobId &&
         job.status !== "completed" &&
         job.status !== "failed"
       ) {
         try {
-          const soraStatus = await getVideoStatus(job.soraJobId);
+          const status = await getSeedanceStatus(job.seedanceJobId);
 
-          const newStatus =
-            soraStatus.status === "completed"
-              ? "completed"
-              : soraStatus.status === "failed"
-                ? "failed"
-                : soraStatus.status === "in_progress"
-                  ? "in_progress"
-                  : "queued";
-
-          db.update(videoJobs)
-            .set({
-              status: newStatus,
-              progress: soraStatus.progress || job.progress,
-              errorMessage: soraStatus.error || job.errorMessage,
-              videoUrl: soraStatus.videoUrl || job.videoUrl,
-              completedAt:
-                newStatus === "completed" ? new Date() : job.completedAt,
-            })
-            .where(eq(videoJobs.id, job.id))
-            .run();
-
-          // Update local object for response
-          job.status = newStatus;
-          job.progress = soraStatus.progress ?? job.progress;
-          job.errorMessage = soraStatus.error || job.errorMessage;
-          job.videoUrl = soraStatus.videoUrl || job.videoUrl;
+          if (status.status === "succeeded" || status.status === "completed") {
+            job.status = "completed";
+            job.progress = 100;
+            job.videoUrl = status.videoUrl;
+          } else if (status.status === "failed") {
+            job.status = "failed";
+            job.errorMessage = status.error;
+          } else {
+            job.status = "in_progress";
+            job.progress = status.progress || 50;
+          }
         } catch {
-          // If status check fails, keep existing status
-          console.error(`Failed to check status for job ${job.id}`);
+          // Keep existing status on transient errors
         }
       }
     }
@@ -77,29 +54,19 @@ export async function GET(request: NextRequest) {
       (j) => j.status === "completed" || j.status === "failed"
     );
 
-    // Update screenplay status if all done
-    if (allCompleted) {
-      const allSuccessful = jobs.every((j) => j.status === "completed");
-      db.update(screenplays)
-        .set({ status: allSuccessful ? "completed" : "failed" })
-        .where(eq(screenplays.id, screenplayId))
-        .run();
-    }
-
     return NextResponse.json({
-      screenplayId,
+      scriptId,
       allCompleted,
       jobs: jobs.map((j) => ({
         id: j.id,
-        sceneId: j.sceneId,
-        screenplayId: j.screenplayId,
-        soraJobId: j.soraJobId,
+        sceneId: `scene-${j.sceneNumber}`,
+        screenplayId: scriptId,
+        soraJobId: j.seedanceJobId,
         status: j.status,
-        progress: j.progress || 0,
+        progress: j.progress,
         errorMessage: j.errorMessage,
         videoUrl: j.videoUrl,
-        createdAt: j.createdAt,
-        completedAt: j.completedAt,
+        createdAt: new Date(),
       })),
     });
   } catch (error) {

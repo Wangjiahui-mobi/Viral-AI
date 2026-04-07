@@ -3,8 +3,8 @@
 import { usePipelineStore, type PipelineStage } from "@/store/pipeline-store";
 
 const STEPS = [
-  { key: "scripts", label: "Scripts", icon: "1" },
-  { key: "refine", label: "Refine", icon: "2" },
+  { key: "analyze", label: "Analyze", icon: "1" },
+  { key: "script", label: "Script", icon: "2" },
   { key: "video", label: "Video", icon: "3" },
 ] as const;
 
@@ -14,17 +14,15 @@ function getStepState(
 ): "completed" | "active" | "upcoming" {
   const stageMap: Record<string, number> = {
     idle: 0,
-    generating_scripts: 0,
-    scripts_generated: 1,
-    refining: 1,
-    refined: 2,
+    analyzing: 0,
+    script_ready: 1,
     generating_video: 2,
     video_completed: 3,
   };
 
   const stepMap: Record<string, number> = {
-    scripts: 1,
-    refine: 2,
+    analyze: 1,
+    script: 2,
     video: 3,
   };
 

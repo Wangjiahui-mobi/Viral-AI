@@ -1,121 +1,82 @@
 import { NextRequest, NextResponse } from "next/server";
 import { nanoid } from "nanoid";
-import { db } from "@/lib/db";
-import {
-  scenes as scenesTable,
-  screenplays,
-  videoJobs,
-} from "@/lib/db/schema";
-import { createVideoJob } from "@/lib/services/sora";
-import { eq } from "drizzle-orm";
+import { createSeedanceJob } from "@/lib/services/seedance";
 import { AppError } from "@/lib/utils/errors";
+
+// In-memory store for video jobs (no DB needed for this flow)
+const jobStore = new Map<
+  string,
+  {
+    id: string;
+    sceneNumber: number;
+    seedanceJobId: string | null;
+    status: string;
+    progress: number;
+    errorMessage?: string;
+    videoUrl?: string;
+  }[]
+>();
+
+export { jobStore };
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { screenplayId } = body as { screenplayId: string };
+    const { scriptId, rawScript } = body as {
+      scriptId: string;
+      rawScript: string;
+    };
 
-    if (!screenplayId) {
+    if (!scriptId || !rawScript) {
       return NextResponse.json(
-        { error: "Missing screenplayId" },
+        { error: "Missing scriptId or rawScript" },
         { status: 400 }
       );
     }
 
-    // Fetch screenplay
-    const screenplay = db
-      .select()
-      .from(screenplays)
-      .where(eq(screenplays.id, screenplayId))
-      .get();
+    // Send the entire script as a single video generation job
+    const jobId = nanoid();
+    const jobs: {
+      id: string;
+      sceneNumber: number;
+      seedanceJobId: string | null;
+      status: string;
+      progress: number;
+      errorMessage?: string;
+      videoUrl?: string;
+    }[] = [];
 
-    if (!screenplay) {
-      return NextResponse.json(
-        { error: "Screenplay not found" },
-        { status: 404 }
-      );
+    try {
+      const result = await createSeedanceJob({
+        prompt: rawScript,
+        duration: 10,
+        ratio: "9:16", // 1080x1920 vertical as specified in prompt
+        watermark: false,
+      });
+
+      jobs.push({
+        id: jobId,
+        sceneNumber: 1,
+        seedanceJobId: result.jobId,
+        status: "queued",
+        progress: 0,
+      });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      jobs.push({
+        id: jobId,
+        sceneNumber: 1,
+        seedanceJobId: null,
+        status: "failed",
+        progress: 0,
+        errorMessage,
+      });
     }
 
-    // Fetch all scenes
-    const scenesList = db
-      .select()
-      .from(scenesTable)
-      .where(eq(scenesTable.screenplayId, screenplayId))
-      .all();
+    jobStore.set(scriptId, jobs);
 
-    if (scenesList.length === 0) {
-      return NextResponse.json(
-        { error: "No scenes found for this screenplay" },
-        { status: 404 }
-      );
-    }
-
-    const now = new Date();
-    const jobs: { sceneId: string; videoJobId: string; status: string }[] = [];
-
-    // Create a video job for each scene
-    for (const scene of scenesList) {
-      const jobId = nanoid();
-
-      try {
-        const soraResult = await createVideoJob(
-          scene.visualDescription,
-          scene.duration
-        );
-
-        db.insert(videoJobs)
-          .values({
-            id: jobId,
-            sceneId: scene.id,
-            screenplayId,
-            soraJobId: soraResult.jobId,
-            status: soraResult.status === "completed" ? "completed" : "queued",
-            progress: 0,
-            createdAt: now,
-          })
-          .run();
-
-        jobs.push({
-          sceneId: scene.id,
-          videoJobId: jobId,
-          status: soraResult.status,
-        });
-      } catch (error) {
-        // If one scene fails, record the error but continue with others
-        const errorMessage =
-          error instanceof Error ? error.message : "Unknown error";
-
-        db.insert(videoJobs)
-          .values({
-            id: jobId,
-            sceneId: scene.id,
-            screenplayId,
-            soraJobId: null,
-            status: "failed",
-            progress: 0,
-            errorMessage,
-            createdAt: now,
-          })
-          .run();
-
-        jobs.push({
-          sceneId: scene.id,
-          videoJobId: jobId,
-          status: "failed",
-        });
-      }
-    }
-
-    // Update screenplay status
-    db.update(screenplays)
-      .set({ status: "video_generating" })
-      .where(eq(screenplays.id, screenplayId))
-      .run();
-
-    return NextResponse.json({
-      screenplayId,
-      jobs,
-    });
+    return NextResponse.json({ scriptId, jobs });
   } catch (error) {
     if (error instanceof AppError) {
       return NextResponse.json(

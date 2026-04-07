@@ -1,46 +1,39 @@
-import type { CreativeScript, RefinedScreenplay } from "./script";
+import type { AnalyzedScript } from "./script";
 import type { VideoJob } from "./video";
 
 // ==============================
 // API Request Types
 // ==============================
 
-export interface GenerateScriptsRequest {
-  amazonUrl: string;
-  customPrompt?: string;
-}
-
-export interface RefineScriptRequest {
-  scriptId: string;
-  projectId: string;
+export interface AnalyzeVideoRequest {
+  videoUrl: string;
   customPrompt?: string;
 }
 
 export interface GenerateVideosRequest {
-  screenplayId: string;
+  scriptId: string;
+  scenes: {
+    sceneNumber: number;
+    visualDescription: string;
+    duration: number;
+  }[];
 }
 
 // ==============================
 // API Response Types
 // ==============================
 
-export interface GenerateScriptsResponse {
-  projectId: string;
-  scripts: CreativeScript[];
-}
-
-export interface RefineScriptResponse {
-  scriptId: string;
-  screenplay: RefinedScreenplay;
+export interface AnalyzeVideoResponse {
+  script: AnalyzedScript;
 }
 
 export interface GenerateVideosResponse {
-  screenplayId: string;
-  jobs: { sceneId: string; videoJobId: string; status: string }[];
+  scriptId: string;
+  jobs: { sceneNumber: number; videoJobId: string; status: string }[];
 }
 
 export interface VideoStatusQueryResponse {
-  screenplayId: string;
+  scriptId: string;
   allCompleted: boolean;
   jobs: VideoJob[];
 }

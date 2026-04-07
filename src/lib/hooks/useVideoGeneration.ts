@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { usePipelineStore } from "@/store/pipeline-store";
-import type { VideoStatusQueryResponse } from "@/lib/types/api";
+import type { VideoJob } from "@/lib/types/video";
 
 export function useVideoGeneration() {
   const [isLoading, setIsLoading] = useState(false);
@@ -11,27 +11,29 @@ export function useVideoGeneration() {
   const pollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollCountRef = useRef(0);
 
-  const { screenplay, setVideoJobs, setStage } = usePipelineStore();
+  const { script, setVideoJobs, setStage } = usePipelineStore();
 
   const getInterval = () => {
-    // Exponential backoff: 10s → 20s → 30s
     if (pollCountRef.current < 5) return 10000;
     if (pollCountRef.current < 15) return 20000;
     return 30000;
   };
 
   const pollStatus = useCallback(
-    async (screenplayId: string) => {
+    async (scriptId: string) => {
       try {
         const response = await fetch(
-          `/api/videos/status?screenplayId=${screenplayId}`
+          `/api/videos/status?scriptId=${scriptId}`
         );
 
         if (!response.ok) {
           throw new Error("Failed to check video status");
         }
 
-        const data: VideoStatusQueryResponse = await response.json();
+        const data = (await response.json()) as {
+          allCompleted: boolean;
+          jobs: VideoJob[];
+        };
         setVideoJobs(data.jobs);
 
         if (data.allCompleted) {
@@ -44,17 +46,15 @@ export function useVideoGeneration() {
           return;
         }
 
-        // Continue polling
         pollCountRef.current += 1;
         pollingRef.current = setTimeout(
-          () => pollStatus(screenplayId),
+          () => pollStatus(scriptId),
           getInterval()
         );
       } catch {
-        // Don't stop polling on transient errors
         pollCountRef.current += 1;
         pollingRef.current = setTimeout(
-          () => pollStatus(screenplayId),
+          () => pollStatus(scriptId),
           getInterval()
         );
       }
@@ -63,8 +63,8 @@ export function useVideoGeneration() {
   );
 
   const startGeneration = async () => {
-    if (!screenplay) {
-      setError("No screenplay available");
+    if (!script) {
+      setError("No script available");
       return;
     }
 
@@ -76,7 +76,10 @@ export function useVideoGeneration() {
       const response = await fetch("/api/videos/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ screenplayId: screenplay.id }),
+        body: JSON.stringify({
+          scriptId: script.id,
+          rawScript: script.rawScript,
+        }),
       });
 
       if (!response.ok) {
@@ -84,17 +87,20 @@ export function useVideoGeneration() {
         throw new Error(data.error || "Failed to start video generation");
       }
 
+      const data = (await response.json()) as { jobs: VideoJob[] };
+      setVideoJobs(data.jobs);
+
       // Start polling
       pollCountRef.current = 0;
       setIsPolling(true);
       pollingRef.current = setTimeout(
-        () => pollStatus(screenplay.id),
-        5000 // First poll after 5s
+        () => pollStatus(script.id),
+        5000
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       setError(message);
-      setStage("refined");
+      setStage("script_ready");
     } finally {
       setIsLoading(false);
     }
@@ -108,7 +114,6 @@ export function useVideoGeneration() {
     setIsPolling(false);
   }, []);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (pollingRef.current) {

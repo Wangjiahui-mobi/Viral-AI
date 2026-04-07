@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Viral AI - Amazon Product Video Generator",
+  title: "Viral AI - Video Clone Generator",
   description:
-    "Generate viral marketing videos from Amazon product links using AI",
+    "Clone any viral TikTok or YouTube video using AI",
 };
 
 export default function RootLayout({
