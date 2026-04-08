@@ -1,12 +1,13 @@
 import { AppError, ErrorCode } from "../utils/errors";
 
-const OPENAI_API_BASE = "https://api.openai.com/v1";
+// Yijia Sora API
+const YIJIA_API_BASE = "https://apius.yijiarj.cn";
 
 function getApiKey(): string {
   const key = process.env.OPENAI_API_KEY;
   if (!key || key === "your_openai_api_key_here") {
     throw new AppError(
-      "OPENAI_API_KEY is not configured",
+      "OPENAI_API_KEY (Sora) is not configured",
       ErrorCode.SORA_API_ERROR,
       500
     );
@@ -22,32 +23,28 @@ function getHeaders() {
 }
 
 // ==============================
-// Create a video generation job
+// Create a video generation job (yijia model)
 // ==============================
 export async function createVideoJob(
   prompt: string,
-  durationSeconds: number,
-  size: string = "1280x720"
+  model: string = "sora-2-yijia"
 ): Promise<{ jobId: string; status: string }> {
-  // Clamp duration to Sora limits (5-20 seconds)
-  const clampedDuration = Math.max(5, Math.min(20, durationSeconds));
-
-  const response = await fetch(`${OPENAI_API_BASE}/videos/generations`, {
+  const response = await fetch(`${YIJIA_API_BASE}/v1/videos`, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify({
-      model: process.env.SORA_MODEL || "sora",
       prompt,
-      size,
-      n: 1,
-      duration: clampedDuration,
+      model,
+      size: getApiKey(), // yijia API uses size field for API key
     }),
   });
 
   if (!response.ok) {
     const errorBody = await response.json().catch(() => ({}));
     const errorMessage =
-      (errorBody as { error?: { message?: string } }).error?.message ||
+      (errorBody as { error?: { message?: string }; message?: string }).error
+        ?.message ||
+      (errorBody as { message?: string }).message ||
       `Sora API error: ${response.status}`;
 
     if (response.status === 429) {
@@ -59,10 +56,22 @@ export async function createVideoJob(
       );
     }
 
-    throw new AppError(errorMessage, ErrorCode.SORA_API_ERROR, response.status, true);
+    throw new AppError(
+      errorMessage,
+      ErrorCode.SORA_API_ERROR,
+      response.status,
+      true
+    );
   }
 
-  const data = (await response.json()) as { id: string; status: string };
+  const data = (await response.json()) as {
+    id: string;
+    status: string;
+    model: string;
+    progress: number;
+  };
+
+  console.log("[Sora] Job created:", data.id, "model:", data.model);
 
   return {
     jobId: data.id,
@@ -71,7 +80,7 @@ export async function createVideoJob(
 }
 
 // ==============================
-// Check video generation status
+// Check video generation status (yijia shared endpoint)
 // ==============================
 export async function getVideoStatus(
   jobId: string
@@ -81,7 +90,8 @@ export async function getVideoStatus(
   error?: string;
   videoUrl?: string;
 }> {
-  const response = await fetch(`${OPENAI_API_BASE}/videos/generations/${jobId}`, {
+  // Yijia uses GET /v1/videos/{id} for status polling
+  const response = await fetch(`${YIJIA_API_BASE}/v1/videos/${jobId}`, {
     method: "GET",
     headers: getHeaders(),
   });
@@ -96,49 +106,43 @@ export async function getVideoStatus(
   }
 
   const data = (await response.json()) as {
+    id: string;
     status: string;
     progress?: number;
     error?: { message?: string };
+    url?: string;
     output?: { url?: string };
     data?: { url?: string }[];
+    video_url?: string;
+    result_url?: string;
   };
+
+  console.log("[Sora] Status:", data.status, "Progress:", data.progress, "URL:", data.url);
 
   // Extract video URL from possible response structures
   let videoUrl: string | undefined;
-  if (data.data && data.data.length > 0) {
+  if (data.url) {
+    videoUrl = data.url;
+  } else if (data.video_url) {
+    videoUrl = data.video_url;
+  } else if (data.result_url) {
+    videoUrl = data.result_url;
+  } else if (data.data && data.data.length > 0) {
     videoUrl = data.data[0].url;
   } else if (data.output?.url) {
     videoUrl = data.output.url;
   }
 
+  // Normalize status
+  let normalizedStatus = data.status || "unknown";
+  if (normalizedStatus === "succeeded" || normalizedStatus === "complete") {
+    normalizedStatus = "completed";
+  }
+
   return {
-    status: data.status || "unknown",
+    status: normalizedStatus,
     progress: data.progress,
     error: data.error?.message,
     videoUrl,
   };
-}
-
-// ==============================
-// Download generated video
-// ==============================
-export async function downloadVideo(
-  videoUrl: string
-): Promise<ReadableStream<Uint8Array>> {
-  const response = await fetch(videoUrl, {
-    headers: {
-      Authorization: `Bearer ${getApiKey()}`,
-    },
-  });
-
-  if (!response.ok || !response.body) {
-    throw new AppError(
-      `Failed to download video: ${response.status}`,
-      ErrorCode.SORA_API_ERROR,
-      response.status,
-      true
-    );
-  }
-
-  return response.body;
 }

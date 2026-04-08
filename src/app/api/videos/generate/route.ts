@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { nanoid } from "nanoid";
-import { createSeedanceJob } from "@/lib/services/seedance";
+import { createVideoJob } from "@/lib/services/sora";
 import { AppError } from "@/lib/utils/errors";
 
-// In-memory store for video jobs (no DB needed for this flow)
+// In-memory store for video jobs
 const jobStore = new Map<
   string,
   {
     id: string;
     sceneNumber: number;
-    seedanceJobId: string | null;
+    soraJobId: string | null;
     status: string;
     progress: number;
     errorMessage?: string;
@@ -34,12 +34,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Send the entire script as a single video generation job
+    // Send the entire script as a single video generation job via Sora yijia
     const jobId = nanoid();
     const jobs: {
       id: string;
       sceneNumber: number;
-      seedanceJobId: string | null;
+      soraJobId: string | null;
       status: string;
       progress: number;
       errorMessage?: string;
@@ -47,27 +47,25 @@ export async function POST(request: NextRequest) {
     }[] = [];
 
     try {
-      const result = await createSeedanceJob({
-        prompt: rawScript,
-        duration: 10,
-        ratio: "9:16", // 1080x1920 vertical as specified in prompt
-        watermark: false,
-      });
+      const result = await createVideoJob(rawScript);
 
       jobs.push({
         id: jobId,
         sceneNumber: 1,
-        seedanceJobId: result.jobId,
-        status: "queued",
+        soraJobId: result.jobId,
+        status: result.status,
         progress: 0,
       });
+
+      console.log("[Generate] Sora job created:", result.jobId);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
+      console.error("[Generate] Sora job failed:", errorMessage);
       jobs.push({
         id: jobId,
         sceneNumber: 1,
-        seedanceJobId: null,
+        soraJobId: null,
         status: "failed",
         progress: 0,
         errorMessage,

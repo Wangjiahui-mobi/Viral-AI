@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSeedanceStatus } from "@/lib/services/seedance";
+import { getVideoStatus } from "@/lib/services/sora";
 import { jobStore } from "../generate/route";
 
 export async function GET(request: NextRequest) {
@@ -23,23 +23,23 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Check status of incomplete jobs
+    // Check status of incomplete jobs via Sora API
     for (const job of jobs) {
       if (
-        job.seedanceJobId &&
+        job.soraJobId &&
         job.status !== "completed" &&
         job.status !== "failed"
       ) {
         try {
-          const status = await getSeedanceStatus(job.seedanceJobId);
+          const status = await getVideoStatus(job.soraJobId);
 
-          if (status.status === "succeeded" || status.status === "completed") {
+          if (status.status === "completed") {
             job.status = "completed";
             job.progress = 100;
             job.videoUrl = status.videoUrl;
           } else if (status.status === "failed") {
             job.status = "failed";
-            job.errorMessage = status.error;
+            job.errorMessage = status.error || "Video generation failed";
           } else {
             job.status = "in_progress";
             job.progress = status.progress || 50;
@@ -61,7 +61,7 @@ export async function GET(request: NextRequest) {
         id: j.id,
         sceneId: `scene-${j.sceneNumber}`,
         screenplayId: scriptId,
-        soraJobId: j.seedanceJobId,
+        soraJobId: j.soraJobId,
         status: j.status,
         progress: j.progress,
         errorMessage: j.errorMessage,

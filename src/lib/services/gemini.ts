@@ -129,7 +129,7 @@ export async function analyzeVideoAndGenerateScript(
 
   // Step 3: Analyze with Gemini
   const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-pro-preview-06-05",
+    model: "gemini-2.5-pro",
   });
 
   const prompt = customPrompt || buildDefaultAnalysisPrompt();
